@@ -1,0 +1,8 @@
+[package]
+name = "du-pretty"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "du-pretty"
+path = "src/main.rs"
