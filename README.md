@@ -52,6 +52,31 @@ $ printf '10\t/var/log/syslog\n' | du-pretty
 du-pretty: line 1: path "/var/log/syslog" has no matching parent entry "/var/log"
 ```
 
+## Trimming large trees
+
+Two flags keep a wide or deep report readable. Both fold the entries they
+hide into a single `... N more entries` summary line per directory, sized
+to the total they represent, rather than dropping them silently:
+
+```
+$ du-pretty --max-depth=1 usage.txt
+   8.0KiB  var
+   8.0KiB    cache
+   2.0KiB    log
+     2.0KiB      ... 2 more entries
+
+$ du-pretty --collapse-under=2048 usage.txt
+   8.0KiB  var
+   8.0KiB    cache
+   2.0KiB    log
+   1.0KiB      syslog
+     1.0KiB      ... 1 more entries
+```
+
+`--max-depth=N` stops descending past depth N from the root. `--collapse-under=BYTES`
+hides individual entries smaller than the threshold within each directory.
+They can be combined.
+
 ## Status
 
 Early skeleton: parsing and printing both work end to end, but there's no
@@ -60,7 +85,6 @@ vs byte-size ambiguity. See below.
 
 ## Roadmap
 
-- flag to cap tree depth / collapse small entries into an "other" bucket
 - optional `--sort=name` to print alphabetically instead of by size
 - read multiple `du` block-size conventions (512-byte blocks vs `-b` bytes)
 - detect and flag hard-linked files so their size isn't double-counted
