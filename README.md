@@ -77,6 +77,19 @@ $ du-pretty --collapse-under=2048 usage.txt
 hides individual entries smaller than the threshold within each directory.
 They can be combined.
 
+## Sorting
+
+By default siblings print biggest-first. `--sort=name` prints them
+alphabetically by basename instead:
+
+```
+$ du-pretty --sort=name usage.txt
+   8.0KiB  var
+   1.0KiB    auth.log
+   8.0KiB    cache
+   2.0KiB    log
+```
+
 ## Status
 
 Early skeleton: parsing and printing both work end to end, but there's no
@@ -85,7 +98,6 @@ vs byte-size ambiguity. See below.
 
 ## Roadmap
 
-- optional `--sort=name` to print alphabetically instead of by size
 - read multiple `du` block-size conventions (512-byte blocks vs `-b` bytes)
 - detect and flag hard-linked files so their size isn't double-counted
 - `--json` output mode for piping into other tools

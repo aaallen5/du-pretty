@@ -1,7 +1,7 @@
 mod parser;
 mod printer;
 
-use printer::PrintOptions;
+use printer::{PrintOptions, SortMode};
 use std::env;
 use std::fs;
 use std::io::{self, Read};
@@ -66,6 +66,12 @@ fn parse_args(args: &[String]) -> Result<(PrintOptions, Option<String>), String>
                 .parse()
                 .map_err(|_| format!("invalid --collapse-under value {:?}", value))?;
             opts.collapse_under = Some(threshold);
+        } else if let Some(value) = arg.strip_prefix("--sort=") {
+            opts.sort = match value {
+                "size" => SortMode::Size,
+                "name" => SortMode::Name,
+                _ => return Err(format!("invalid --sort value {:?} (expected \"size\" or \"name\")", value)),
+            };
         } else if let Some(flag) = arg.strip_prefix("--") {
             return Err(format!("unknown flag --{}", flag));
         } else if path.is_some() {
@@ -94,6 +100,19 @@ mod tests {
     #[test]
     fn rejects_unknown_flag() {
         let args: Vec<String> = vec!["--bogus".to_string()];
+        assert!(parse_args(&args).is_err());
+    }
+
+    #[test]
+    fn parses_sort_flag() {
+        let args: Vec<String> = vec!["--sort=name".to_string()];
+        let (opts, _) = parse_args(&args).unwrap();
+        assert_eq!(opts.sort, SortMode::Name);
+    }
+
+    #[test]
+    fn rejects_invalid_sort_value() {
+        let args: Vec<String> = vec!["--sort=alphabetical".to_string()];
         assert!(parse_args(&args).is_err());
     }
 

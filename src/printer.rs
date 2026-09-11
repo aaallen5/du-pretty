@@ -16,6 +16,26 @@ type ChildMap<'a> = HashMap<Option<&'a str>, Vec<&'a Entry>>;
 pub struct PrintOptions {
     pub max_depth: Option<usize>,
     pub collapse_under: Option<u64>,
+    pub sort: SortMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortMode {
+    Size,
+    Name,
+}
+
+impl Default for SortMode {
+    fn default() -> Self {
+        SortMode::Size
+    }
+}
+
+fn sort_siblings(list: &mut [&Entry], mode: SortMode) {
+    match mode {
+        SortMode::Size => list.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.path.cmp(&b.path))),
+        SortMode::Name => list.sort_by(|a, b| basename(&a.path).cmp(basename(&b.path))),
+    }
 }
 
 pub fn print_tree(entries: &[Entry], opts: &PrintOptions) -> String {
@@ -34,9 +54,9 @@ pub fn print_tree(entries: &[Entry], opts: &PrintOptions) -> String {
     }
 
     for list in children.values_mut() {
-        list.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.path.cmp(&b.path)));
+        sort_siblings(list, opts.sort);
     }
-    roots.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.path.cmp(&b.path)));
+    sort_siblings(&mut roots, opts.sort);
 
     let mut out = String::new();
     for root in &roots {
@@ -81,9 +101,9 @@ fn count_descendants(path: &str, children: &ChildMap) -> usize {
     }
 }
 
-// kids arrives sorted biggest-first, so everything under the threshold is
-// already a contiguous run at the end and splitting it off keeps `shown`
-// sorted without a second pass.
+// kids arrives already sorted per opts.sort; partitioning by size preserves
+// that relative order within `shown` regardless of which sort mode produced
+// it, so this never needs a re-sort afterward.
 fn split_for_collapse<'a>(kids: &[&'a Entry], threshold: Option<u64>) -> (Vec<&'a Entry>, Option<(usize, u64)>) {
     let Some(threshold) = threshold else {
         return (kids.to_vec(), None);
@@ -179,7 +199,7 @@ mod tests {
     #[test]
     fn max_depth_collapses_deeper_entries_into_a_summary() {
         let entries = sample_entries();
-        let opts = PrintOptions { max_depth: Some(1), collapse_under: None };
+        let opts = PrintOptions { max_depth: Some(1), collapse_under: None, ..Default::default() };
         let out = print_tree(&entries, &opts);
         // roots + their direct children (var, cache, log) print in full, the
         // three entries under /var/log fold into one "more entries" line.
@@ -190,11 +210,23 @@ mod tests {
     #[test]
     fn collapse_under_folds_small_siblings_together() {
         let entries = sample_entries();
-        let opts = PrintOptions { max_depth: None, collapse_under: Some(1024) };
+        let opts = PrintOptions { max_depth: None, collapse_under: Some(1024), ..Default::default() };
         let out = print_tree(&entries, &opts);
         assert!(out.contains("2B  ... 2 more entries"));
         assert!(!out.contains("auth.log"));
         assert!(!out.contains("kern.log"));
         assert!(out.contains("syslog"));
+    }
+
+    #[test]
+    fn sort_by_name_orders_siblings_alphabetically() {
+        let entries = sample_entries();
+        let opts = PrintOptions { sort: SortMode::Name, ..Default::default() };
+        let out = print_tree(&entries, &opts);
+        let auth_pos = out.find("auth.log").unwrap();
+        let kern_pos = out.find("kern.log").unwrap();
+        let syslog_pos = out.find("syslog").unwrap();
+        assert!(auth_pos < kern_pos);
+        assert!(kern_pos < syslog_pos);
     }
 }
