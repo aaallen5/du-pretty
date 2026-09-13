@@ -26,6 +26,18 @@ have its parent directory present as its own line somewhere in the report —
 that's the invariant the parser checks before handing anything to the
 printer.
 
+Plain `du -a` (no `-b`) doesn't report bytes — it reports a count of
+512-byte blocks, rounded up per file, on both GNU and BSD du. Pass
+`--size-unit=blocks` to tell du-pretty to scale those counts up to bytes
+before printing:
+
+```
+$ du -a /var | du-pretty --size-unit=blocks
+```
+
+The default, `--size-unit=bytes`, assumes the input is already in bytes,
+matching `du -ab`.
+
 ## Usage
 
 ```
@@ -92,12 +104,11 @@ $ du-pretty --sort=name usage.txt
 
 ## Status
 
-Early skeleton: parsing and printing both work end to end, but there's no
-handling yet for symlinks, hard-link double-counting, or `du`'s block-size
-vs byte-size ambiguity. See below.
+Early skeleton: parsing and printing both work end to end, and both of
+`du`'s size conventions (bytes and 512-byte blocks) are understood, but
+there's no handling yet for hard-link double-counting. See below.
 
 ## Roadmap
 
-- read multiple `du` block-size conventions (512-byte blocks vs `-b` bytes)
 - detect and flag hard-linked files so their size isn't double-counted
 - `--json` output mode for piping into other tools
