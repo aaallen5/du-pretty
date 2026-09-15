@@ -38,7 +38,7 @@ fn sort_siblings(list: &mut [&Entry], mode: SortMode) {
     }
 }
 
-pub fn print_tree(entries: &[Entry], opts: &PrintOptions) -> String {
+fn build_tree<'a>(entries: &'a [Entry], sort: SortMode) -> (ChildMap<'a>, Vec<&'a Entry>) {
     let known: std::collections::HashSet<&str> = entries.iter().map(|e| e.path.as_str()).collect();
 
     let mut children: ChildMap = HashMap::new();
@@ -54,15 +54,96 @@ pub fn print_tree(entries: &[Entry], opts: &PrintOptions) -> String {
     }
 
     for list in children.values_mut() {
-        sort_siblings(list, opts.sort);
+        sort_siblings(list, sort);
     }
-    sort_siblings(&mut roots, opts.sort);
+    sort_siblings(&mut roots, sort);
+
+    (children, roots)
+}
+
+pub fn print_tree(entries: &[Entry], opts: &PrintOptions) -> String {
+    let (children, roots) = build_tree(entries, opts.sort);
 
     let mut out = String::new();
     for root in &roots {
         write_entry(root, &children, 0, opts, &mut out);
     }
     out
+}
+
+// Mirrors print_tree's shape (same depth/collapse rules) but as a JSON array
+// of nodes instead of indented lines, so a downstream tool can walk the tree
+// without re-parsing human-readable sizes. Hidden descendants - whether from
+// --max-depth or --collapse-under - surface as a "hidden" count/size on the
+// node they'd otherwise hang off, rather than being silently dropped.
+pub fn print_tree_json(entries: &[Entry], opts: &PrintOptions) -> String {
+    let (children, roots) = build_tree(entries, opts.sort);
+
+    let mut out = String::from("[");
+    for (i, root) in roots.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        write_json_entry(root, &children, 0, opts, &mut out);
+    }
+    out.push(']');
+    out
+}
+
+fn write_json_entry(entry: &Entry, children: &ChildMap, depth: usize, opts: &PrintOptions, out: &mut String) {
+    out.push_str("{\"path\":");
+    push_json_string(&entry.path, out);
+    out.push_str(",\"name\":");
+    push_json_string(basename(&entry.path), out);
+    out.push_str(&format!(",\"size\":{}", entry.size));
+
+    let Some(kids) = children.get(&Some(entry.path.as_str())) else {
+        out.push_str(",\"children\":[]}");
+        return;
+    };
+
+    if opts.max_depth.is_some_and(|max| depth >= max) {
+        let hidden_size: u64 = kids.iter().map(|k| k.size).sum();
+        let hidden_count = kids.iter().map(|k| 1 + count_descendants(&k.path, children)).sum();
+        out.push_str(",\"children\":[]");
+        push_json_hidden(hidden_count, hidden_size, out);
+        out.push('}');
+        return;
+    }
+
+    let (shown, other) = split_for_collapse(kids, opts.collapse_under);
+    out.push_str(",\"children\":[");
+    for (i, child) in shown.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        write_json_entry(child, children, depth + 1, opts, out);
+    }
+    out.push(']');
+    if let Some((count, size)) = other {
+        push_json_hidden(count, size, out);
+    }
+    out.push('}');
+}
+
+fn push_json_hidden(count: usize, size: u64, out: &mut String) {
+    out.push_str(&format!(",\"hidden\":{{\"count\":{},\"size\":{}}}", count, size));
+}
+
+fn push_json_string(s: &str, out: &mut String) {
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
 }
 
 fn write_entry(entry: &Entry, children: &ChildMap, depth: usize, opts: &PrintOptions, out: &mut String) {
@@ -216,6 +297,43 @@ mod tests {
         assert!(!out.contains("auth.log"));
         assert!(!out.contains("kern.log"));
         assert!(out.contains("syslog"));
+    }
+
+    #[test]
+    fn json_output_nests_children_and_omits_hidden_when_absent() {
+        let entries = vec![
+            Entry { size: 4096, path: "/var".to_string(), line: 1 },
+            Entry { size: 1024, path: "/var/cache".to_string(), line: 2 },
+        ];
+        let out = print_tree_json(&entries, &PrintOptions::default());
+        assert_eq!(
+            out,
+            r#"[{"path":"/var","name":"var","size":4096,"children":[{"path":"/var/cache","name":"cache","size":1024,"children":[]}]}]"#
+        );
+    }
+
+    #[test]
+    fn json_max_depth_reports_hidden_count_and_size() {
+        let entries = sample_entries();
+        let opts = PrintOptions { max_depth: Some(1), collapse_under: None, ..Default::default() };
+        let out = print_tree_json(&entries, &opts);
+        assert!(out.contains(r#""path":"/var/log","name":"log","size":3072,"children":[],"hidden":{"count":3,"size":2050}"#));
+    }
+
+    #[test]
+    fn json_collapse_under_reports_hidden_count_and_size() {
+        let entries = sample_entries();
+        let opts = PrintOptions { max_depth: None, collapse_under: Some(1024), ..Default::default() };
+        let out = print_tree_json(&entries, &opts);
+        assert!(out.contains(r#""hidden":{"count":2,"size":2}"#));
+        assert!(!out.contains("auth.log"));
+    }
+
+    #[test]
+    fn json_string_escaping_handles_quotes_and_backslashes() {
+        let entries = vec![Entry { size: 1, path: "/a\"b\\c".to_string(), line: 1 }];
+        let out = print_tree_json(&entries, &PrintOptions::default());
+        assert!(out.contains(r#""name":"a\"b\\c""#));
     }
 
     #[test]

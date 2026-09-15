@@ -11,7 +11,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
 
-    let (opts, unit, path) = match parse_args(&args) {
+    let (opts, unit, json, path) = match parse_args(&args) {
         Ok(parsed) => parsed,
         Err(err) => {
             eprintln!("du-pretty: {}", err);
@@ -45,16 +45,21 @@ fn main() -> ExitCode {
         }
     };
 
-    print!("{}", printer::print_tree(&entries, &opts));
+    if json {
+        println!("{}", printer::print_tree_json(&entries, &opts));
+    } else {
+        print!("{}", printer::print_tree(&entries, &opts));
+    }
     ExitCode::SUCCESS
 }
 
 // Only one positional argument (the report path) is accepted; everything
 // else must be a recognized `--flag=value` so typos fail loudly instead of
 // being read as a second file path.
-fn parse_args(args: &[String]) -> Result<(PrintOptions, SizeUnit, Option<String>), String> {
+fn parse_args(args: &[String]) -> Result<(PrintOptions, SizeUnit, bool, Option<String>), String> {
     let mut opts = PrintOptions::default();
     let mut unit = SizeUnit::default();
+    let mut json = false;
     let mut path = None;
 
     for arg in args {
@@ -80,6 +85,8 @@ fn parse_args(args: &[String]) -> Result<(PrintOptions, SizeUnit, Option<String>
                 "blocks" => SizeUnit::Blocks512,
                 _ => return Err(format!("invalid --size-unit value {:?} (expected \"bytes\" or \"blocks\")", value)),
             };
+        } else if arg == "--json" {
+            json = true;
         } else if let Some(flag) = arg.strip_prefix("--") {
             return Err(format!("unknown flag --{}", flag));
         } else if path.is_some() {
@@ -89,7 +96,7 @@ fn parse_args(args: &[String]) -> Result<(PrintOptions, SizeUnit, Option<String>
         }
     }
 
-    Ok((opts, unit, path))
+    Ok((opts, unit, json, path))
 }
 
 #[cfg(test)]
@@ -99,9 +106,10 @@ mod tests {
     #[test]
     fn parses_flags_and_path_in_any_order() {
         let args: Vec<String> = vec!["--max-depth=2".to_string(), "usage.txt".to_string(), "--collapse-under=1024".to_string()];
-        let (opts, _, path) = parse_args(&args).unwrap();
+        let (opts, _, json, path) = parse_args(&args).unwrap();
         assert_eq!(opts.max_depth, Some(2));
         assert_eq!(opts.collapse_under, Some(1024));
+        assert!(!json);
         assert_eq!(path, Some("usage.txt".to_string()));
     }
 
@@ -114,7 +122,7 @@ mod tests {
     #[test]
     fn parses_sort_flag() {
         let args: Vec<String> = vec!["--sort=name".to_string()];
-        let (opts, _, _) = parse_args(&args).unwrap();
+        let (opts, _, _, _) = parse_args(&args).unwrap();
         assert_eq!(opts.sort, SortMode::Name);
     }
 
@@ -133,15 +141,30 @@ mod tests {
     #[test]
     fn defaults_to_bytes_unit() {
         let args: Vec<String> = vec![];
-        let (_, unit, _) = parse_args(&args).unwrap();
+        let (_, unit, _, _) = parse_args(&args).unwrap();
         assert_eq!(unit, SizeUnit::Bytes);
     }
 
     #[test]
     fn parses_size_unit_flag() {
         let args: Vec<String> = vec!["--size-unit=blocks".to_string()];
-        let (_, unit, _) = parse_args(&args).unwrap();
+        let (_, unit, _, _) = parse_args(&args).unwrap();
         assert_eq!(unit, SizeUnit::Blocks512);
+    }
+
+    #[test]
+    fn parses_json_flag() {
+        let args: Vec<String> = vec!["--json".to_string(), "usage.txt".to_string()];
+        let (_, _, json, path) = parse_args(&args).unwrap();
+        assert!(json);
+        assert_eq!(path, Some("usage.txt".to_string()));
+    }
+
+    #[test]
+    fn defaults_json_to_false() {
+        let args: Vec<String> = vec![];
+        let (_, _, json, _) = parse_args(&args).unwrap();
+        assert!(!json);
     }
 
     #[test]

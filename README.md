@@ -102,13 +102,30 @@ $ du-pretty --sort=name usage.txt
    2.0KiB    log
 ```
 
+## JSON output
+
+`--json` prints the same tree as a JSON array of nodes instead of indented
+text, for piping into other tools:
+
+```
+$ du-pretty --json --max-depth=1 usage.txt
+[{"path":"/var","name":"var","size":8192,"children":[{"path":"/var/cache","name":"cache","size":8192,"children":[]},{"path":"/var/log","name":"log","size":2048,"children":[],"hidden":{"count":2,"size":2048}}]}]
+```
+
+Each node has `path`, `name` (basename), `size`, and `children`. `--max-depth`
+and `--collapse-under` apply the same as in text mode; whatever they'd hide
+shows up as a `hidden` field (`count` and total `size`) on the node whose
+descendants were folded away, instead of being dropped from the output.
+
 ## Status
 
-Early skeleton: parsing and printing both work end to end, and both of
-`du`'s size conventions (bytes and 512-byte blocks) are understood, but
-there's no handling yet for hard-link double-counting. See below.
+Parsing and printing both work end to end: both of `du`'s size conventions
+(bytes and 512-byte blocks) are understood, output can be trimmed and
+sorted, and it can be printed as text or JSON. `du -ab`'s flat format
+carries no inode numbers, so there's currently no way to detect when two
+entries are actually the same hard-linked file - see below.
 
 ## Roadmap
 
-- detect and flag hard-linked files so their size isn't double-counted
-- `--json` output mode for piping into other tools
+- detect hard-linked files and flag them so their size isn't double-counted
+  once an input format that carries inode numbers is available
