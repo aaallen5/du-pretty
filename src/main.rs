@@ -11,6 +11,11 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
 
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print!("{}", usage());
+        return ExitCode::SUCCESS;
+    }
+
     let (opts, unit, json, path) = match parse_args(&args) {
         Ok(parsed) => parsed,
         Err(err) => {
@@ -51,6 +56,23 @@ fn main() -> ExitCode {
         print!("{}", printer::print_tree(&entries, &opts));
     }
     ExitCode::SUCCESS
+}
+
+fn usage() -> String {
+    "Usage: du-pretty [OPTIONS] [FILE]\n\
+\n\
+Parses flat `du -ab` style output and prints it as an indented tree.\n\
+Reads FILE if given, otherwise reads stdin.\n\
+\n\
+Options:\n\
+      --max-depth=N          stop descending past depth N, summarize the rest\n\
+      --collapse-under=BYTES fold entries smaller than BYTES into a summary\n\
+      --sort=size|name       sort siblings by size (default) or by name\n\
+      --size-unit=bytes|blocks\n\
+                             input sizes are bytes (default) or 512-byte blocks\n\
+      --json                 print the tree as JSON instead of indented text\n\
+  -h, --help                 print this help and exit\n"
+        .to_string()
 }
 
 // Only one positional argument (the report path) is accepted; everything
@@ -171,5 +193,13 @@ mod tests {
     fn rejects_invalid_size_unit_value() {
         let args: Vec<String> = vec!["--size-unit=kilobytes".to_string()];
         assert!(parse_args(&args).is_err());
+    }
+
+    #[test]
+    fn usage_documents_every_recognized_flag() {
+        let text = usage();
+        for flag in ["--max-depth", "--collapse-under", "--sort", "--size-unit", "--json", "--help"] {
+            assert!(text.contains(flag), "usage text missing {}", flag);
+        }
     }
 }

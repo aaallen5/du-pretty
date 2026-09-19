@@ -56,6 +56,8 @@ $ du-pretty usage.txt
    1.0KiB      auth.log
 ```
 
+Run `du-pretty --help` for a summary of every flag.
+
 If a line is malformed or the tree doesn't add up, du-pretty reports the
 line number and exits non-zero instead of guessing:
 
