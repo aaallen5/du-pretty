@@ -111,6 +111,8 @@ fn parse_args(args: &[String]) -> Result<(PrintOptions, SizeUnit, bool, Option<S
             json = true;
         } else if let Some(flag) = arg.strip_prefix("--") {
             return Err(format!("unknown flag --{}", flag));
+        } else if arg.starts_with('-') && arg.len() > 1 {
+            return Err(format!("unknown flag {}", arg));
         } else if path.is_some() {
             return Err("only one input path may be given".to_string());
         } else {
@@ -139,6 +141,13 @@ mod tests {
     fn rejects_unknown_flag() {
         let args: Vec<String> = vec!["--bogus".to_string()];
         assert!(parse_args(&args).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_single_dash_flag_instead_of_reading_it_as_a_path() {
+        let args: Vec<String> = vec!["-v".to_string()];
+        let err = parse_args(&args).unwrap_err();
+        assert!(err.contains("-v"), "error should mention the flag: {}", err);
     }
 
     #[test]
