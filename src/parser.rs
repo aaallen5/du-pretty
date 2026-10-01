@@ -1,7 +1,7 @@
 // Parses the flat "<size>\t<path>" lines that `du` (and du -a, du -b) emit,
 // and checks that the result actually forms a tree before we trust it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -9,6 +9,8 @@ pub struct Entry {
     pub size: u64,
     pub path: String,
     pub line: usize,
+    // Path of the earlier entry sharing this entry's inode, if any.
+    pub link_of: Option<String>,
 }
 
 #[derive(Debug)]
@@ -47,15 +49,48 @@ impl SizeUnit {
     }
 }
 
+// `du` itself never prints inode numbers, so hard links can only be spotted
+// when the report comes from something that does, e.g.
+// `find /var -printf '%i %s %p\n'`. WithInodes expects that
+// "<inode> <size> <path>" shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputFormat {
+    #[default]
+    Plain,
+    WithInodes,
+}
+
 pub fn parse(input: &str, unit: SizeUnit) -> Result<Vec<Entry>, ParseError> {
+    parse_with(input, unit, InputFormat::Plain)
+}
+
+pub fn parse_with(input: &str, unit: SizeUnit, format: InputFormat) -> Result<Vec<Entry>, ParseError> {
     let mut entries = Vec::new();
     let mut seen_paths: HashSet<String> = HashSet::new();
+    let mut first_by_inode: HashMap<u64, String> = HashMap::new();
 
     for (idx, raw_line) in input.lines().enumerate() {
         let line_no = idx + 1;
-        let line = raw_line.trim_end();
+        let mut line = raw_line.trim_end();
         if line.trim().is_empty() {
             continue;
+        }
+
+        let mut inode = None;
+        if format == InputFormat::WithInodes {
+            let mut head = line.trim_start().splitn(2, char::is_whitespace);
+            let inode_field = head.next().unwrap_or("");
+            inode = Some(inode_field.parse::<u64>().map_err(|_| ParseError {
+                line: line_no,
+                message: format!("inode {:?} is not a non-negative integer", inode_field),
+            })?);
+            line = head.next().unwrap_or("").trim_start();
+            if line.is_empty() {
+                return Err(ParseError {
+                    line: line_no,
+                    message: "missing size field".to_string(),
+                });
+            }
         }
 
         let mut parts = line.splitn(2, char::is_whitespace);
@@ -98,10 +133,21 @@ pub fn parse(input: &str, unit: SizeUnit) -> Result<Vec<Entry>, ParseError> {
             });
         }
 
+        // Only the first path seen for an inode is the "real" one; later
+        // paths with the same inode are links to it.
+        let link_of = inode.and_then(|ino| match first_by_inode.get(&ino) {
+            Some(first) => Some(first.clone()),
+            None => {
+                first_by_inode.insert(ino, path_field.to_string());
+                None
+            }
+        });
+
         entries.push(Entry {
             size,
             path: path_field.to_string(),
             line: line_no,
+            link_of,
         });
     }
 
@@ -177,5 +223,32 @@ mod tests {
     fn blocks512_rejects_overflowing_size() {
         let input = "18446744073709551615\t/var\n";
         assert!(parse(input, SizeUnit::Blocks512).is_err());
+    }
+
+    #[test]
+    fn plain_format_never_marks_links() {
+        let entries = parse("4096\t/d\n10\t/d/a\n10\t/d/b\n", SizeUnit::Bytes).unwrap();
+        assert!(entries.iter().all(|e| e.link_of.is_none()));
+    }
+
+    #[test]
+    fn inode_format_flags_later_paths_sharing_an_inode() {
+        let input = "1 4096 /d\n7 10 /d/a\n8 5 /d/c\n7 10 /d/b\n";
+        let entries = parse_with(input, SizeUnit::Bytes, InputFormat::WithInodes).unwrap();
+        assert_eq!(entries[1].link_of, None);
+        assert_eq!(entries[2].link_of, None);
+        assert_eq!(entries[3].link_of.as_deref(), Some("/d/a"));
+    }
+
+    #[test]
+    fn inode_format_rejects_non_numeric_inode() {
+        let err = parse_with("x 10 /d\n", SizeUnit::Bytes, InputFormat::WithInodes).unwrap_err();
+        assert_eq!(err.line, 1);
+        assert!(err.message.contains("inode"));
+    }
+
+    #[test]
+    fn inode_format_rejects_line_with_only_an_inode() {
+        assert!(parse_with("7\n", SizeUnit::Bytes, InputFormat::WithInodes).is_err());
     }
 }

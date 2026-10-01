@@ -1,7 +1,7 @@
 mod parser;
 mod printer;
 
-use parser::SizeUnit;
+use parser::{InputFormat, SizeUnit};
 use printer::{PrintOptions, SortMode};
 use std::env;
 use std::fs;
@@ -16,7 +16,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let (opts, unit, json, path) = match parse_args(&args) {
+    let Args { opts, unit, format, json, path } = match parse_args(&args) {
         Ok(parsed) => parsed,
         Err(err) => {
             eprintln!("du-pretty: {}", err);
@@ -42,7 +42,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let entries = match parser::parse(&input, unit) {
+    let entries = match parser::parse_with(&input, unit, format) {
         Ok(entries) => entries,
         Err(err) => {
             eprintln!("du-pretty: {}", err);
@@ -70,6 +70,7 @@ Options:\n\
       --sort=size|name       sort siblings by size (default) or by name\n\
       --size-unit=bytes|blocks\n\
                              input sizes are bytes (default) or 512-byte blocks\n\
+      --inodes               input lines are \"<inode> <size> <path>\"; flag hard links\n\
       --json                 print the tree as JSON instead of indented text\n\
   -h, --help                 print this help and exit\n"
         .to_string()
@@ -78,9 +79,19 @@ Options:\n\
 // Only one positional argument (the report path) is accepted; everything
 // else must be a recognized `--flag=value` so typos fail loudly instead of
 // being read as a second file path.
-fn parse_args(args: &[String]) -> Result<(PrintOptions, SizeUnit, bool, Option<String>), String> {
+#[derive(Debug)]
+struct Args {
+    opts: PrintOptions,
+    unit: SizeUnit,
+    format: InputFormat,
+    json: bool,
+    path: Option<String>,
+}
+
+fn parse_args(args: &[String]) -> Result<Args, String> {
     let mut opts = PrintOptions::default();
     let mut unit = SizeUnit::default();
+    let mut format = InputFormat::default();
     let mut json = false;
     let mut path = None;
 
@@ -109,6 +120,8 @@ fn parse_args(args: &[String]) -> Result<(PrintOptions, SizeUnit, bool, Option<S
             };
         } else if arg == "--json" {
             json = true;
+        } else if arg == "--inodes" {
+            format = InputFormat::WithInodes;
         } else if let Some(flag) = arg.strip_prefix("--") {
             return Err(format!("unknown flag --{}", flag));
         } else if arg.starts_with('-') && arg.len() > 1 {
@@ -120,7 +133,7 @@ fn parse_args(args: &[String]) -> Result<(PrintOptions, SizeUnit, bool, Option<S
         }
     }
 
-    Ok((opts, unit, json, path))
+    Ok(Args { opts, unit, format, json, path })
 }
 
 #[cfg(test)]
@@ -130,11 +143,11 @@ mod tests {
     #[test]
     fn parses_flags_and_path_in_any_order() {
         let args: Vec<String> = vec!["--max-depth=2".to_string(), "usage.txt".to_string(), "--collapse-under=1024".to_string()];
-        let (opts, _, json, path) = parse_args(&args).unwrap();
-        assert_eq!(opts.max_depth, Some(2));
-        assert_eq!(opts.collapse_under, Some(1024));
-        assert!(!json);
-        assert_eq!(path, Some("usage.txt".to_string()));
+        let parsed = parse_args(&args).unwrap();
+        assert_eq!(parsed.opts.max_depth, Some(2));
+        assert_eq!(parsed.opts.collapse_under, Some(1024));
+        assert!(!parsed.json);
+        assert_eq!(parsed.path, Some("usage.txt".to_string()));
     }
 
     #[test]
@@ -153,8 +166,8 @@ mod tests {
     #[test]
     fn parses_sort_flag() {
         let args: Vec<String> = vec!["--sort=name".to_string()];
-        let (opts, _, _, _) = parse_args(&args).unwrap();
-        assert_eq!(opts.sort, SortMode::Name);
+        let parsed = parse_args(&args).unwrap();
+        assert_eq!(parsed.opts.sort, SortMode::Name);
     }
 
     #[test]
@@ -172,30 +185,37 @@ mod tests {
     #[test]
     fn defaults_to_bytes_unit() {
         let args: Vec<String> = vec![];
-        let (_, unit, _, _) = parse_args(&args).unwrap();
-        assert_eq!(unit, SizeUnit::Bytes);
+        let parsed = parse_args(&args).unwrap();
+        assert_eq!(parsed.unit, SizeUnit::Bytes);
+        assert_eq!(parsed.format, InputFormat::Plain);
     }
 
     #[test]
     fn parses_size_unit_flag() {
         let args: Vec<String> = vec!["--size-unit=blocks".to_string()];
-        let (_, unit, _, _) = parse_args(&args).unwrap();
-        assert_eq!(unit, SizeUnit::Blocks512);
+        let parsed = parse_args(&args).unwrap();
+        assert_eq!(parsed.unit, SizeUnit::Blocks512);
+    }
+
+    #[test]
+    fn parses_inodes_flag() {
+        let args: Vec<String> = vec!["--inodes".to_string()];
+        let parsed = parse_args(&args).unwrap();
+        assert_eq!(parsed.format, InputFormat::WithInodes);
     }
 
     #[test]
     fn parses_json_flag() {
         let args: Vec<String> = vec!["--json".to_string(), "usage.txt".to_string()];
-        let (_, _, json, path) = parse_args(&args).unwrap();
-        assert!(json);
-        assert_eq!(path, Some("usage.txt".to_string()));
+        let parsed = parse_args(&args).unwrap();
+        assert!(parsed.json);
+        assert_eq!(parsed.path, Some("usage.txt".to_string()));
     }
 
     #[test]
     fn defaults_json_to_false() {
         let args: Vec<String> = vec![];
-        let (_, _, json, _) = parse_args(&args).unwrap();
-        assert!(!json);
+        assert!(!parse_args(&args).unwrap().json);
     }
 
     #[test]
@@ -207,7 +227,7 @@ mod tests {
     #[test]
     fn usage_documents_every_recognized_flag() {
         let text = usage();
-        for flag in ["--max-depth", "--collapse-under", "--sort", "--size-unit", "--json", "--help"] {
+        for flag in ["--max-depth", "--collapse-under", "--sort", "--size-unit", "--inodes", "--json", "--help"] {
             assert!(text.contains(flag), "usage text missing {}", flag);
         }
     }

@@ -96,6 +96,10 @@ fn write_json_entry(entry: &Entry, children: &ChildMap, depth: usize, opts: &Pri
     out.push_str(",\"name\":");
     push_json_string(basename(&entry.path), out);
     out.push_str(&format!(",\"size\":{}", entry.size));
+    if let Some(target) = &entry.link_of {
+        out.push_str(",\"link_of\":");
+        push_json_string(target, out);
+    }
 
     let Some(kids) = children.get(&Some(entry.path.as_str())) else {
         out.push_str(",\"children\":[]}");
@@ -148,11 +152,16 @@ fn push_json_string(s: &str, out: &mut String) {
 
 fn write_entry(entry: &Entry, children: &ChildMap, depth: usize, opts: &PrintOptions, out: &mut String) {
     let indent = "  ".repeat(depth);
+    let link_note = match &entry.link_of {
+        Some(target) => format!("  (hard link to {})", target),
+        None => String::new(),
+    };
     out.push_str(&format!(
-        "{}{:>10}  {}\n",
+        "{}{:>10}  {}{}\n",
         indent,
         human_size(entry.size),
-        basename(&entry.path)
+        basename(&entry.path),
+        link_note
     ));
 
     let Some(kids) = children.get(&Some(entry.path.as_str())) else {
@@ -261,13 +270,29 @@ mod tests {
 
     fn sample_entries() -> Vec<Entry> {
         vec![
-            Entry { size: 4096, path: "/var".to_string(), line: 1 },
-            Entry { size: 3072, path: "/var/log".to_string(), line: 2 },
-            Entry { size: 2048, path: "/var/log/syslog".to_string(), line: 3 },
-            Entry { size: 1, path: "/var/log/auth.log".to_string(), line: 4 },
-            Entry { size: 1, path: "/var/log/kern.log".to_string(), line: 5 },
-            Entry { size: 1024, path: "/var/cache".to_string(), line: 6 },
+            entry(4096, "/var", 1),
+            entry(3072, "/var/log", 2),
+            entry(2048, "/var/log/syslog", 3),
+            entry(1, "/var/log/auth.log", 4),
+            entry(1, "/var/log/kern.log", 5),
+            entry(1024, "/var/cache", 6),
         ]
+    }
+
+    fn entry(size: u64, path: &str, line: usize) -> Entry {
+        Entry { size, path: path.to_string(), line, link_of: None }
+    }
+
+    #[test]
+    fn hard_links_are_flagged_in_text_and_json() {
+        let mut linked = entry(10, "/d/b", 3);
+        linked.link_of = Some("/d/a".to_string());
+        let entries = vec![entry(30, "/d", 1), entry(10, "/d/a", 2), linked];
+        let text = print_tree(&entries, &PrintOptions { sort: SortMode::Name, ..Default::default() });
+        assert!(text.contains("b  (hard link to /d/a)"));
+        assert!(!text.contains("a  (hard link"));
+        let json = print_tree_json(&entries, &PrintOptions::default());
+        assert!(json.contains(r#""name":"b","size":10,"link_of":"/d/a""#));
     }
 
     #[test]
@@ -302,8 +327,8 @@ mod tests {
     #[test]
     fn json_output_nests_children_and_omits_hidden_when_absent() {
         let entries = vec![
-            Entry { size: 4096, path: "/var".to_string(), line: 1 },
-            Entry { size: 1024, path: "/var/cache".to_string(), line: 2 },
+            entry(4096, "/var", 1),
+            entry(1024, "/var/cache", 2),
         ];
         let out = print_tree_json(&entries, &PrintOptions::default());
         assert_eq!(
@@ -331,7 +356,7 @@ mod tests {
 
     #[test]
     fn json_string_escaping_handles_quotes_and_backslashes() {
-        let entries = vec![Entry { size: 1, path: "/a\"b\\c".to_string(), line: 1 }];
+        let entries = vec![entry(1, "/a\"b\\c", 1)];
         let out = print_tree_json(&entries, &PrintOptions::default());
         assert!(out.contains(r#""name":"a\"b\\c""#));
     }

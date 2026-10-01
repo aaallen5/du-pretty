@@ -119,15 +119,28 @@ and `--collapse-under` apply the same as in text mode; whatever they'd hide
 shows up as a `hidden` field (`count` and total `size`) on the node whose
 descendants were folded away, instead of being dropped from the output.
 
+## Hard links
+
+`du` doesn't print inode numbers, so it can't tell du-pretty which paths are
+the same file. With `--inodes` the input is `<inode> <size> <path>` per line
+instead, which `find` can produce:
+
+```
+$ find /var -printf '%i %s %p\n' | du-pretty --inodes
+```
+
+Any path whose inode was already seen on an earlier line is marked
+`(hard link to <first path>)` in text output, and gets a `link_of` field in
+JSON. Sizes are printed as given; the marker is there so you know which
+entries are counted twice.
+
 ## Status
 
 Parsing and printing both work end to end: both of `du`'s size conventions
 (bytes and 512-byte blocks) are understood, output can be trimmed and
-sorted, and it can be printed as text or JSON. `du -ab`'s flat format
-carries no inode numbers, so there's currently no way to detect when two
-entries are actually the same hard-linked file - see below.
+sorted, and it can be printed as text or JSON. Hard links are flagged when
+the input carries inode numbers.
 
 ## Roadmap
 
-- detect hard-linked files and flag them so their size isn't double-counted
-  once an input format that carries inode numbers is available
+- optionally leave hard-link duplicates out of the directory totals
